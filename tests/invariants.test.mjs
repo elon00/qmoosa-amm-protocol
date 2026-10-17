@@ -10,7 +10,9 @@ import {
   calculateInitialLpTokens,
   computeOptimalDeposit,
   calculateLiquidityRemoval,
-  MINIMUM_LIQUIDITY
+  MINIMUM_LIQUIDITY,
+  getCanonicalPoolId,
+  canonicalizeAsset
 } from "../dist/index.js";
 
 describe("Protocol Mathematical Invariants & Bounded Arithmetic", () => {
@@ -104,5 +106,43 @@ describe("Protocol Mathematical Invariants & Bounded Arithmetic", () => {
 
     // Attempting to burn locked minimum liquidity throws
     assert.throws(() => calculateLiquidityRemoval(totalLp, rA, rB, totalLp), /INSUFFICIENT_LIQUIDITY/);
+  });
+
+  test("Canonical pool identity enforces deterministic IDs across case, order, and network", () => {
+    // 1. Case insensitivity and order independence for EVM
+    const res1 = getCanonicalPoolId("ETH", "USDC", 30);
+    const res2 = getCanonicalPoolId("usdc", "eth", 30);
+    const res3 = getCanonicalPoolId("eTh", "UsDc", 30);
+
+    assert.equal(res1.poolId, "eth:usdc:30");
+    assert.equal(res2.poolId, "eth:usdc:30");
+    assert.equal(res3.poolId, "eth:usdc:30");
+    assert.equal(res1.canonicalToken0, "eth");
+    assert.equal(res1.canonicalToken1, "usdc");
+
+    // 2. Real EVM checksummed and lowercase hex addresses
+    const usdcAddr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+    const wethAddr = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+    const pair1 = getCanonicalPoolId(usdcAddr, wethAddr, 30);
+    const pair2 = getCanonicalPoolId(wethAddr.toLowerCase(), usdcAddr.toLowerCase(), 30);
+    assert.equal(pair1.poolId, pair2.poolId);
+    assert.equal(pair1.poolId.startsWith("0xa0b8"), true);
+
+    // 3. Chain isolation prevents cross-network collisions
+    const pairArbitrum = getCanonicalPoolId(usdcAddr, wethAddr, 30, 42161);
+    const pairMainnet = getCanonicalPoolId(usdcAddr, wethAddr, 30, 1);
+    assert.notEqual(pairArbitrum.poolId, pairMainnet.poolId);
+    assert.equal(pairArbitrum.poolId.startsWith("eip155:42161:"), true);
+
+    // 4. Rejection of identical canonical assets
+    assert.throws(() => getCanonicalPoolId("USDC", "usdc", 30), /IDENTICAL_ADDRESSES/);
+    assert.throws(() => getCanonicalPoolId(usdcAddr, usdcAddr.toLowerCase(), 30), /IDENTICAL_ADDRESSES/);
+
+    // 5. Case-sensitive preservation for non-EVM
+    const solTokenA = "So11111111111111111111111111111111111111112";
+    const solTokenB = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const solPair = getCanonicalPoolId(solTokenA, solTokenB, 30, 1, "non-evm");
+    assert.equal(solPair.canonicalToken0, solTokenB); // 'E' < 'S'
+    assert.equal(solPair.canonicalToken1, solTokenA);
   });
 });

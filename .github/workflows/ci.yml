@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -22,8 +24,17 @@ jobs:
       - name: Install dependencies with strict lockfile
         run: npm ci
 
-      - name: Static type analysis (Lint)
+      - name: Static type analysis (tsc)
         run: npm run lint
 
       - name: Execute real mathematical invariant tests
         run: npm test
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Run Foundry Solidity Unit, Fuzz, and Invariant Tests
+        working-directory: contracts
+        run: forge test -vv
