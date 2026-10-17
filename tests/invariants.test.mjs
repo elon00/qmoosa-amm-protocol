@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   validateFeeBps,
+  validateSlippageBps,
   canonicalizeTokenPair,
   verifyConstantProductInvariant,
   getAmountOut,
@@ -12,7 +13,7 @@ import {
   MINIMUM_LIQUIDITY
 } from "../dist/index.js";
 
-describe("Protocol Mathematical Invariants & Bounds", () => {
+describe("Protocol Mathematical Invariants & Bounded Arithmetic", () => {
   test("Fee validation enforces [1, 1000] range", () => {
     assert.doesNotThrow(() => validateFeeBps(1));
     assert.doesNotThrow(() => validateFeeBps(30));
@@ -22,12 +23,25 @@ describe("Protocol Mathematical Invariants & Bounds", () => {
     assert.throws(() => validateFeeBps(30.5), /INVALID_FEE_BPS/);
   });
 
-  test("Token pair canonicalization orders and prevents identical tokens", () => {
-    const [t0, t1] = canonicalizeTokenPair("USDC", "ETH");
-    assert.equal(t0, "ETH");
-    assert.equal(t1, "USDC");
+  test("Slippage validation enforces (0, 5000] range", () => {
+    assert.doesNotThrow(() => validateSlippageBps(1));
+    assert.doesNotThrow(() => validateSlippageBps(50));
+    assert.doesNotThrow(() => validateSlippageBps(5000));
+    assert.throws(() => validateSlippageBps(0), /AMM_EXCESSIVE_SLIPPAGE/);
+    assert.throws(() => validateSlippageBps(-10), /AMM_EXCESSIVE_SLIPPAGE/);
+    assert.throws(() => validateSlippageBps(5001), /AMM_EXCESSIVE_SLIPPAGE/);
+  });
 
-    assert.throws(() => canonicalizeTokenPair("ETH", "ETH"), /IDENTICAL_ADDRESSES/);
+  test("Token pair canonicalization handles EVM and case-sensitive policies", () => {
+    const [e0, e1] = canonicalizeTokenPair("USDC", "ETH", "EVM_CASE_INSENSITIVE");
+    assert.equal(e0, "eth");
+    assert.equal(e1, "usdc");
+
+    // Case-sensitive preservation for non-EVM
+    const [s0, s1] = canonicalizeTokenPair("So11111111111111111111111111111111111111112", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "CASE_SENSITIVE_CANONICAL");
+    assert.equal(s0 < s1, true);
+
+    assert.throws(() => canonicalizeTokenPair("ETH", "eth", "EVM_CASE_INSENSITIVE"), /IDENTICAL_ADDRESSES/);
     assert.throws(() => canonicalizeTokenPair("", "USDC"), /INVALID_TOKEN_IDENTIFIER/);
   });
 
@@ -46,19 +60,36 @@ describe("Protocol Mathematical Invariants & Bounds", () => {
     assert.equal(lp, 1000000n - MINIMUM_LIQUIDITY);
   });
 
-  test("Optimal deposit computation prevents mispriced liquidity and refunds excess", () => {
+  test("Optimal deposit computation validates both minimums, rejects malformed bounds, and refunds excess", () => {
     const reserveA = 100000n;
     const reserveB = 200000n; // 1:2 ratio
+    const totalLp = 141421n;
 
-    // User provides 10,000 A and 25,000 B (excess B provided)
-    const { amountA, amountB, refundA, refundB } = computeOptimalDeposit(
-      10000n, 25000n, 10000n, 20000n, reserveA, reserveB
+    // 1. Successful optimal deposit with refund
+    const res = computeOptimalDeposit(10000n, 25000n, 10000n, 20000n, reserveA, reserveB, totalLp);
+    assert.equal(res.amountA, 10000n);
+    assert.equal(res.amountB, 20000n);
+    assert.equal(res.refundA, 0n);
+    assert.equal(res.refundB, 5000n);
+    assert.ok(res.lpTokensMinted > 0n);
+
+    // 2. Reject malformed bounds where min > desired
+    assert.throws(
+      () => computeOptimalDeposit(10000n, 20000n, 10001n, 20000n, reserveA, reserveB, totalLp),
+      /AMM_EXCESSIVE_SLIPPAGE/
     );
 
-    assert.equal(amountA, 10000n);
-    assert.equal(amountB, 20000n); // exactly matched 1:2 ratio
-    assert.equal(refundA, 0n);
-    assert.equal(refundB, 5000n);  // 5,000 B refunded to user
+    // 3. Reject negative bounds
+    assert.throws(
+      () => computeOptimalDeposit(10000n, 20000n, -1n, 20000n, reserveA, reserveB, totalLp),
+      /AMM_ZERO_AMOUNT/
+    );
+
+    // 4. Reject tiny deposit that results in 0 LP tokens minted
+    assert.throws(
+      () => computeOptimalDeposit(1n, 2n, 0n, 0n, 1000000000000n, 2000000000000n, 1000n),
+      /AMM_INSUFFICIENT_LIQUIDITY/
+    );
   });
 
   test("Liquidity removal burns proportional shares and protects locked liquidity", () => {

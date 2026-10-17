@@ -2,13 +2,14 @@
  * QMOOSA AMM MATHEMATICAL INVARIANTS & BOUNDED ARITHMETIC
  * Pure mathematical functions for Constant Product (x * y = k) AMM.
  * Implements strict integer arithmetic, round-down protection favoring the pool,
- * optimal deposit ratio enforcement, fee validation, and invariant verification.
+ * dual-sided optimal deposit bounds enforcement, fee validation, and invariant verification.
  */
 import { AmmErrorCode } from "../interfaces/index.js";
 export const BPS_DENOMINATOR = 10000n;
 export const MINIMUM_LIQUIDITY = 1000n; // Permanently locked minimum liquidity on pool initialization
 export const MIN_FEE_BPS = 1; // 0.01% minimum fee
 export const MAX_FEE_BPS = 1000; // 10.00% maximum fee
+export const MAX_SLIPPAGE_BPS = 5000; // 50.00% maximum acceptable slippage tolerance
 /**
  * Validates fee basis points within strict mathematical bounds [1, 1000].
  */
@@ -18,18 +19,33 @@ export function validateFeeBps(feeBps) {
     }
 }
 /**
- * Validates and canonicalizes token identifiers.
+ * Validates slippage tolerance basis points within strict bounds (0, 5000].
  */
-export function canonicalizeTokenPair(tokenA, tokenB) {
+export function validateSlippageBps(slippageBps) {
+    if (!Number.isInteger(slippageBps) || slippageBps <= 0 || slippageBps > MAX_SLIPPAGE_BPS) {
+        throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: slippageBps must be an integer between 1 and ${MAX_SLIPPAGE_BPS}`);
+    }
+}
+/**
+ * Validates and canonicalizes token identifiers respecting target asset identity policies.
+ * EVM: Case-folded to lowercase for canonical matching.
+ * Non-EVM (Solana/Bitcoin/Algorand): Case-sensitive preservation with lexicographic ordering.
+ */
+export function canonicalizeTokenPair(tokenA, tokenB, policy = "EVM_CASE_INSENSITIVE") {
     if (!tokenA || !tokenB || typeof tokenA !== "string" || typeof tokenB !== "string") {
         throw new Error(`${AmmErrorCode.INVALID_TOKEN_IDENTIFIER}: Token identifiers must be non-empty strings`);
     }
     const cleanA = tokenA.trim();
     const cleanB = tokenB.trim();
-    if (cleanA.toLowerCase() === cleanB.toLowerCase()) {
-        throw new Error(`${AmmErrorCode.IDENTICAL_ADDRESSES}: Cannot pair identical token identifiers ${cleanA}`);
+    if (cleanA.length === 0 || cleanB.length === 0) {
+        throw new Error(`${AmmErrorCode.INVALID_TOKEN_IDENTIFIER}: Token identifiers cannot be empty or whitespace`);
     }
-    return cleanA.toLowerCase() < cleanB.toLowerCase() ? [cleanA, cleanB] : [cleanB, cleanA];
+    const normA = policy === "EVM_CASE_INSENSITIVE" ? cleanA.toLowerCase() : cleanA;
+    const normB = policy === "EVM_CASE_INSENSITIVE" ? cleanB.toLowerCase() : cleanB;
+    if (normA === normB) {
+        throw new Error(`${AmmErrorCode.IDENTICAL_ADDRESSES}: Cannot pair identical token identifiers (${cleanA})`);
+    }
+    return normA < normB ? [normA, normB] : [normB, normA];
 }
 /**
  * Validates the constant-product invariant:
@@ -103,51 +119,64 @@ export function calculateInitialLpTokens(amountA, amountB) {
 }
 /**
  * Computes optimal deposit amounts enforcing constant-ratio liquidity addition.
- * Refunds excess to prevent provider value extraction or unintended slippage.
+ * Enforces strict validation of both minimum thresholds and guarantees positive asset & LP issuance.
  */
-export function computeOptimalDeposit(amountADesired, amountBDesired, amountAMin, amountBMin, reserveA, reserveB) {
+export function computeOptimalDeposit(amountADesired, amountBDesired, amountAMin, amountBMin, reserveA, reserveB, totalLpSupply) {
+    // 1. Strict positive desired amounts
     if (amountADesired <= 0n || amountBDesired <= 0n) {
         throw new Error(`${AmmErrorCode.ZERO_AMOUNT}: Desired amounts must be strictly positive`);
     }
-    if (reserveA <= 0n || reserveB <= 0n) {
-        throw new Error(`${AmmErrorCode.INSUFFICIENT_LIQUIDITY}: Reserves must be strictly positive`);
+    // 2. Strict non-negative and valid minimum thresholds
+    if (amountAMin < 0n || amountBMin < 0n) {
+        throw new Error(`${AmmErrorCode.ZERO_AMOUNT}: Minimum bounds cannot be negative`);
     }
+    if (amountAMin > amountADesired) {
+        throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: amountAMin (${amountAMin}) exceeds amountADesired (${amountADesired})`);
+    }
+    if (amountBMin > amountBDesired) {
+        throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: amountBMin (${amountBMin}) exceeds amountBDesired (${amountBDesired})`);
+    }
+    if (reserveA <= 0n || reserveB <= 0n || totalLpSupply <= 0n) {
+        throw new Error(`${AmmErrorCode.INSUFFICIENT_LIQUIDITY}: Pool reserves and total supply must be strictly positive`);
+    }
+    let actualA;
+    let actualB;
+    let refundA = 0n;
+    let refundB = 0n;
     const amountBOptimal = (amountADesired * reserveB) / reserveA;
     if (amountBOptimal <= amountBDesired) {
-        if (amountBOptimal < amountBMin) {
-            throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: Optimal amountB (${amountBOptimal}) is less than amountBMin (${amountBMin})`);
-        }
-        return {
-            amountA: amountADesired,
-            amountB: amountBOptimal,
-            refundA: 0n,
-            refundB: amountBDesired - amountBOptimal
-        };
+        actualA = amountADesired;
+        actualB = amountBOptimal;
+        refundB = amountBDesired - amountBOptimal;
     }
     else {
         const amountAOptimal = (amountBDesired * reserveA) / reserveB;
         if (amountAOptimal > amountADesired) {
             throw new Error(`${AmmErrorCode.SUB_OPTIMAL_RATIO}: Inconsistent optimal calculation`);
         }
-        if (amountAOptimal < amountAMin) {
-            throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: Optimal amountA (${amountAOptimal}) is less than amountAMin (${amountAMin})`);
-        }
-        return {
-            amountA: amountAOptimal,
-            amountB: amountBDesired,
-            refundA: amountADesired - amountAOptimal,
-            refundB: 0n
-        };
+        actualA = amountAOptimal;
+        actualB = amountBDesired;
+        refundA = amountADesired - amountAOptimal;
     }
-}
-/**
- * Calculates subsequent LP tokens minted for verified optimal deposit amounts:
- * lpTokens = min((amountA * totalLp) / reserveA, (amountB * totalLp) / reserveB)
- */
-export function calculateSubsequentLpTokens(amountA, amountB, reserveA, reserveB, totalLpSupply) {
-    const lpA = (amountA * totalLpSupply) / reserveA;
-    const lpB = (amountB * totalLpSupply) / reserveB;
-    return lpA < lpB ? lpA : lpB;
+    // 3. Enforce both minimum bounds strictly on actual deposit amounts
+    if (actualA < amountAMin) {
+        throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: Actual deposit A (${actualA}) < required minimum (${amountAMin})`);
+    }
+    if (actualB < amountBMin) {
+        throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: Actual deposit B (${actualB}) < required minimum (${amountBMin})`);
+    }
+    // 4. Enforce non-zero asset deposits
+    if (actualA <= 0n || actualB <= 0n) {
+        throw new Error(`${AmmErrorCode.ZERO_AMOUNT}: Optimal deposit calculated to zero asset`);
+    }
+    // 5. Calculate LP tokens to mint and ensure > 0
+    const lpA = (actualA * totalLpSupply) / reserveA;
+    const lpB = (actualB * totalLpSupply) / reserveB;
+    const lpTokensMinted = lpA < lpB ? lpA : lpB;
+    if (lpTokensMinted <= 0n) {
+        throw new Error(`${AmmErrorCode.INSUFFICIENT_LIQUIDITY}: Deposit yields 0 LP tokens minted due to extreme dilution or rounding`);
+    }
+    return { amountA: actualA, amountB: actualB, refundA, refundB, lpTokensMinted };
 }
 /**
  * Calculates assets returned upon burning LP tokens:
@@ -166,6 +195,9 @@ export function calculateLiquidityRemoval(lpTokensToBurn, reserveA, reserveB, to
     }
     const amountA = (lpTokensToBurn * reserveA) / totalLpSupply;
     const amountB = (lpTokensToBurn * reserveB) / totalLpSupply;
+    if (amountA <= 0n && amountB <= 0n) {
+        throw new Error(`${AmmErrorCode.ZERO_AMOUNT}: Redeemed amounts calculate to zero`);
+    }
     if (amountA < amountAMin) {
         throw new Error(`${AmmErrorCode.EXCESSIVE_SLIPPAGE}: Redeemed amountA (${amountA}) < min (${amountAMin})`);
     }

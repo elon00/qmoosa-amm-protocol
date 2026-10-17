@@ -2,20 +2,28 @@
  * QMOOSA AMM MATHEMATICAL INVARIANTS & BOUNDED ARITHMETIC
  * Pure mathematical functions for Constant Product (x * y = k) AMM.
  * Implements strict integer arithmetic, round-down protection favoring the pool,
- * optimal deposit ratio enforcement, fee validation, and invariant verification.
+ * dual-sided optimal deposit bounds enforcement, fee validation, and invariant verification.
  */
 export declare const BPS_DENOMINATOR = 10000n;
 export declare const MINIMUM_LIQUIDITY = 1000n;
 export declare const MIN_FEE_BPS = 1;
 export declare const MAX_FEE_BPS = 1000;
+export declare const MAX_SLIPPAGE_BPS = 5000;
+export type AssetIdentityPolicy = "EVM_CASE_INSENSITIVE" | "CASE_SENSITIVE_CANONICAL";
 /**
  * Validates fee basis points within strict mathematical bounds [1, 1000].
  */
 export declare function validateFeeBps(feeBps: number): void;
 /**
- * Validates and canonicalizes token identifiers.
+ * Validates slippage tolerance basis points within strict bounds (0, 5000].
  */
-export declare function canonicalizeTokenPair(tokenA: string, tokenB: string): [string, string];
+export declare function validateSlippageBps(slippageBps: number): void;
+/**
+ * Validates and canonicalizes token identifiers respecting target asset identity policies.
+ * EVM: Case-folded to lowercase for canonical matching.
+ * Non-EVM (Solana/Bitcoin/Algorand): Case-sensitive preservation with lexicographic ordering.
+ */
+export declare function canonicalizeTokenPair(tokenA: string, tokenB: string, policy?: AssetIdentityPolicy): [string, string];
 /**
  * Validates the constant-product invariant:
  * (reserveIn + amountInWithFee) * (reserveOut - amountOut) >= reserveIn * reserveOut
@@ -38,19 +46,15 @@ export declare function getAmountIn(amountOut: bigint, reserveIn: bigint, reserv
 export declare function calculateInitialLpTokens(amountA: bigint, amountB: bigint): bigint;
 /**
  * Computes optimal deposit amounts enforcing constant-ratio liquidity addition.
- * Refunds excess to prevent provider value extraction or unintended slippage.
+ * Enforces strict validation of both minimum thresholds and guarantees positive asset & LP issuance.
  */
-export declare function computeOptimalDeposit(amountADesired: bigint, amountBDesired: bigint, amountAMin: bigint, amountBMin: bigint, reserveA: bigint, reserveB: bigint): {
+export declare function computeOptimalDeposit(amountADesired: bigint, amountBDesired: bigint, amountAMin: bigint, amountBMin: bigint, reserveA: bigint, reserveB: bigint, totalLpSupply: bigint): {
     amountA: bigint;
     amountB: bigint;
     refundA: bigint;
     refundB: bigint;
+    lpTokensMinted: bigint;
 };
-/**
- * Calculates subsequent LP tokens minted for verified optimal deposit amounts:
- * lpTokens = min((amountA * totalLp) / reserveA, (amountB * totalLp) / reserveB)
- */
-export declare function calculateSubsequentLpTokens(amountA: bigint, amountB: bigint, reserveA: bigint, reserveB: bigint, totalLpSupply: bigint): bigint;
 /**
  * Calculates assets returned upon burning LP tokens:
  * amountA = (lpTokensToBurn * reserveA) / totalLpSupply
