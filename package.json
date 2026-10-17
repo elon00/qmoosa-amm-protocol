@@ -1,13 +1,14 @@
 {
   "name": "@qmoosa/amm-protocol",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Formal protocol specifications, mathematical invariants, and type definitions for Qmoosa AMM",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "node -e \"console.log('Protocol specification schemas and interfaces verified.')\"",
-    "lint": "node -e \"console.log('Lint check passed.')\""
+    "test": "npm run build && node --test tests/invariants.test.mjs",
+    "lint": "tsc --noEmit"
   },
   "keywords": [
     "amm",

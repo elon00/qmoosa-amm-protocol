@@ -17,12 +17,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm install --no-audit
+      - name: Install dependencies with strict lockfile
+        run: npm ci
 
-      - name: Compile TypeScript specifications
-        run: npm run build
+      - name: Static type analysis (Lint)
+        run: npm run lint
 
-      - name: Verify mathematical invariants
+      - name: Execute real mathematical invariant tests
         run: npm test
