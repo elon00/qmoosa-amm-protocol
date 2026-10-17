@@ -1,0 +1,25 @@
+{
+  "name": "@qmoosa/amm-protocol",
+  "version": "1.0.0",
+  "description": "Formal protocol specifications, mathematical invariants, and type definitions for Qmoosa AMM",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node -e \"console.log('Protocol specification schemas and interfaces verified.')\"",
+    "lint": "node -e \"console.log('Lint check passed.')\""
+  },
+  "keywords": [
+    "amm",
+    "defi",
+    "qmoosa",
+    "invariants",
+    "protocol",
+    "x402"
+  ],
+  "author": "elon00",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

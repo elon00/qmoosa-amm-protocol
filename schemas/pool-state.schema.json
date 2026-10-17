@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PoolState",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "object",
+      "properties": {
+        "tokenA": { "type": "string" },
+        "tokenB": { "type": "string" },
+        "feeBps": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      },
+      "required": ["tokenA", "tokenB", "feeBps"]
+    },
+    "reserveA": { "type": "string", "pattern": "^[0-9]+$" },
+    "reserveB": { "type": "string", "pattern": "^[0-9]+$" },
+    "totalLpSupply": { "type": "string", "pattern": "^[0-9]+$" },
+    "blockTimestamp": { "type": "integer" },
+    "sequenceNumber": { "type": "string", "pattern": "^[0-9]+$" }
+  },
+  "required": ["key", "reserveA", "reserveB", "totalLpSupply", "blockTimestamp", "sequenceNumber"]
+}
