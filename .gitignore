@@ -1,3 +1,15 @@
 node_modules/
 .DS_Store
 *.log
+
+# Local secrets and verification evidence
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.keypair.json
+reports/
+.local/
+__pycache__/
+*.pyc

@@ -142,7 +142,7 @@ describe("Protocol Mathematical Invariants & Bounded Arithmetic", () => {
     const solTokenA = "So11111111111111111111111111111111111111112";
     const solTokenB = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
     const solPair = getCanonicalPoolId(solTokenA, solTokenB, 30, 1, "non-evm");
-    assert.equal(solPair.canonicalToken0, solTokenB); // 'E' < 'S'
-    assert.equal(solPair.canonicalToken1, solTokenA);
+    assert.equal(solPair.canonicalToken0, "non-evm:1:" + solTokenB); // 'E' < 'S'
+    assert.equal(solPair.canonicalToken1, "non-evm:1:" + solTokenA);
   });
 });

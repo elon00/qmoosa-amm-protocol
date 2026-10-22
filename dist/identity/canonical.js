@@ -1,43 +1,47 @@
 /**
- * Canonical Asset Identity Policy (Mission 05D)
- * Provides deterministic, cross-chain-aware asset canonicalization and pool key generation.
+ * Asset and pool lookup identities. Raw aliases are allowed for local models;
+ * these helpers do not establish that an asset exists on a blockchain.
  */
+import { validateFeeBps } from "../math/invariants.js";
 export function validateAssetIdentifier(identifier) {
-    if (!identifier || typeof identifier !== "string" || identifier.trim().length === 0) {
-        throw new Error("INVALID_ASSET_IDENTIFIER: Asset identifier must be a non-empty string");
+    if (typeof identifier !== "string" || !identifier.trim() || identifier.length > 1024 ||
+        /[\u0000-\u001f\u007f]/.test(identifier)) {
+        throw new Error("INVALID_ASSET_IDENTIFIER: Use a bounded raw identifier without control characters");
+    }
+    try {
+        encodeURIComponent(identifier);
+    }
+    catch {
+        throw new Error("INVALID_ASSET_IDENTIFIER: Use well-formed Unicode");
     }
 }
-export function canonicalizeAsset(identifier, chainId = 1, networkType = "evm") {
+function validateNetwork(chainId, networkType) {
+    if (networkType !== "evm" && networkType !== "non-evm") {
+        throw new Error("UNSUPPORTED_NETWORK_TYPE: Select evm or non-evm explicitly");
+    }
+    const id = chainId === undefined && networkType === "evm" ? 1 : chainId;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
+        throw new Error("INVALID_CHAIN_ID: Non-EVM assets require an explicit positive safe integer network identifier");
+    }
+    return id;
+}
+export function canonicalizeAsset(identifier, chainId, networkType = "evm") {
     validateAssetIdentifier(identifier);
+    const networkId = validateNetwork(chainId, networkType);
     const trimmed = identifier.trim();
     if (networkType === "evm") {
-        // Check if it's an EVM 20-byte address (0x + 40 hex chars)
-        const isAddress = /^0x[0-9a-fA-F]{40}$/.test(trimmed);
-        if (isAddress) {
-            const lower = trimmed.toLowerCase();
-            return chainId === 1 ? lower : `eip155:${chainId}:${lower}`;
-        }
-        // For symbols or aliases in local sandbox, canonicalize to lowercase
-        const lower = trimmed.toLowerCase();
-        return chainId === 1 ? lower : `eip155:${chainId}:${lower}`;
+        const lower = encodeURIComponent(trimmed.toLowerCase());
+        return networkId === 1 ? lower : `eip155:${networkId}:${lower}`;
     }
-    else {
-        // Non-EVM networks (e.g. Solana base58 addresses or Algorand identifiers) are case-sensitive
-        return trimmed;
-    }
+    return `non-evm:${networkId}:${encodeURIComponent(trimmed)}`;
 }
-export function getCanonicalPoolId(tokenA, tokenB, feeBps, chainId = 1, networkType = "evm") {
-    validateAssetIdentifier(tokenA);
-    validateAssetIdentifier(tokenB);
+export function getCanonicalPoolId(tokenA, tokenB, feeBps, chainId, networkType = "evm") {
+    validateFeeBps(feeBps);
     const cA = canonicalizeAsset(tokenA, chainId, networkType);
     const cB = canonicalizeAsset(tokenB, chainId, networkType);
     if (cA === cB) {
-        throw new Error("AMM_IDENTICAL_ADDRESSES: Cannot create pool or quote with identical canonical assets");
+        throw new Error("AMM_IDENTICAL_ADDRESSES: Cannot pair identical canonical assets");
     }
-    // Deterministic lexicographical sorting independent of caller order
-    const isAFirst = cA < cB;
-    const canonicalToken0 = isAFirst ? cA : cB;
-    const canonicalToken1 = isAFirst ? cB : cA;
-    const poolId = `${canonicalToken0}:${canonicalToken1}:${feeBps}`;
-    return { poolId, canonicalToken0, canonicalToken1 };
+    const [canonicalToken0, canonicalToken1] = cA < cB ? [cA, cB] : [cB, cA];
+    return { poolId: `${canonicalToken0}:${canonicalToken1}:${feeBps}`, canonicalToken0, canonicalToken1 };
 }

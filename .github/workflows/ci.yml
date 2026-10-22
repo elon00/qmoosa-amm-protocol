@@ -1,40 +1,155 @@
-name: Protocol Reality CI & Invariant Gate
-
-on:
+name: Protocol verification
+'on':
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
-
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: protocol-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  verify-protocol:
-    runs-on: ubuntu-latest
+  sdk:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies with strict lockfile
-        run: npm ci
-
-      - name: Static type analysis (tsc)
-        run: npm run lint
-
-      - name: Execute real mathematical invariant tests
-        run: npm test
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: nightly
-
-      - name: Run Foundry Solidity Unit, Fuzz, and Invariant Tests
-        working-directory: contracts
-        run: forge test -vv
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - run: npm ci --ignore-scripts
+    - run: npm run lint
+    - run: npm test
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - name: Verify all generated SDK output is committed
+      run: python tools/check_sdk_output.py
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09
+      with:
+        version: v1.8.5
+    - name: Contract, fuzz and stateful invariant tests
+      working-directory: contracts
+      run: forge test -vv
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - name: Verify SDK contract ABIs and bytecode against the pinned compiler
+      run: node ci/check_contract_artifacts.mjs
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - run: npm ci --ignore-scripts
+    - run: npm audit --audit-level=high
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - run: python -m unittest discover -s ci -v
+  credentials:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Check out immutable scanner and policy outside the target repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: elon00/qmoosa-1000
+        ref: 6c0e18f684685606845a9aaeba0b8eb08da69dce
+        path: trusted-security
+        persist-credentials: false
+    - name: Check out complete target history separately
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        path: project
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - name: Install checksum-pinned credential scanner
+      run: python trusted-security/tools/security_guard.py install
+    - name: Verify trusted scanner protections and exact-fixture boundaries
+      run: python -m unittest discover -s trusted-security/tests -p test_security_guard.py -v
+    - name: Scan target history, merge diffs and commit/tag messages
+      run: python trusted-security/tools/security_guard.py scan --repo project --report reports/credential-scan.json
+    - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      if: always()
+      with:
+        name: credential-scan
+        path: reports/credential-scan.json
+        if-no-files-found: error
+  codeql:
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+  required:
+    name: Required protocol gate
+    if: ${{ always() }}
+    needs: [sdk, contracts, dependencies, credentials, codeql]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - run: python tools/release_gate.py --report reports/protocol-gate.json
+      env:
+        NEEDS_JSON: ${{ toJSON(needs) }}
+    - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      if: always()
+      with:
+        name: protocol-gate
+        path: reports/protocol-gate.json
+        if-no-files-found: error
+  package-candidate:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [required]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+        package-manager-cache: false
+    - run: npm ci --ignore-scripts
+    - run: npm run build
+    - run: mkdir -p reports
+    - name: Produce reviewable package candidate without publishing to a registry
+      run: npm pack --ignore-scripts --pack-destination reports
+    - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      with:
+        name: sdk-package-candidate
+        path: reports/*.tgz
+        if-no-files-found: error
