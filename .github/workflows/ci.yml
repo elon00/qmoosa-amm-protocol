@@ -29,8 +29,11 @@ jobs:
     - run: npm ci --ignore-scripts
     - run: npm run lint
     - run: npm test
-    - name: Verify committed SDK output matches source
-      run: git diff --exit-code -- dist
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - name: Verify all generated SDK output is committed
+      run: python tools/check_sdk_output.py
   contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 15

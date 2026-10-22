@@ -15,31 +15,33 @@ export function validateAssetIdentifier(identifier: string): void {
   catch { throw new Error("INVALID_ASSET_IDENTIFIER: Use well-formed Unicode"); }
 }
 
-function validateNetwork(chainId: number, networkType: NetworkType): void {
-  if (!Number.isSafeInteger(chainId) || chainId <= 0) {
-    throw new Error("INVALID_CHAIN_ID: A positive safe integer network identifier is required");
-  }
+function validateNetwork(chainId: number | undefined, networkType: NetworkType): number {
   if (networkType !== "evm" && networkType !== "non-evm") {
     throw new Error("UNSUPPORTED_NETWORK_TYPE: Select evm or non-evm explicitly");
   }
+  const id = chainId === undefined && networkType === "evm" ? 1 : chainId;
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
+    throw new Error("INVALID_CHAIN_ID: Non-EVM assets require an explicit positive safe integer network identifier");
+  }
+  return id;
 }
 
 export function canonicalizeAsset(
-  identifier: string, chainId: number = 1, networkType: NetworkType = "evm",
+  identifier: string, chainId?: number, networkType: NetworkType = "evm",
 ): string {
   validateAssetIdentifier(identifier);
-  validateNetwork(chainId, networkType);
+  const networkId = validateNetwork(chainId, networkType);
   const trimmed = identifier.trim();
   if (networkType === "evm") {
     const lower = encodeURIComponent(trimmed.toLowerCase());
-    return chainId === 1 ? lower : `eip155:${chainId}:${lower}`;
+    return networkId === 1 ? lower : `eip155:${networkId}:${lower}`;
   }
-  return `non-evm:${chainId}:${encodeURIComponent(trimmed)}`;
+  return `non-evm:${networkId}:${encodeURIComponent(trimmed)}`;
 }
 
 export function getCanonicalPoolId(
   tokenA: string, tokenB: string, feeBps: number,
-  chainId: number = 1, networkType: NetworkType = "evm",
+  chainId?: number, networkType: NetworkType = "evm",
 ): { poolId: string; canonicalToken0: string; canonicalToken1: string } {
   validateFeeBps(feeBps);
   const cA = canonicalizeAsset(tokenA, chainId, networkType);

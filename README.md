@@ -18,7 +18,7 @@ This project is a library and contract package. It has no browser application or
 
 ## Pool identities in 2.0.0 candidate
 
-The identity helpers validate fee bounds, positive safe integer network IDs and supported case policies. Non-EVM identities now include the provided network ID. Identifier components are percent-encoded so structured identifiers cannot create delimiter collisions. Control characters, malformed Unicode and identifiers longer than 1024 code units are rejected.
+The identity helpers validate fee bounds, positive safe integer network IDs and supported case policies. Non-EVM identities require an explicit network ID and include it in the lookup key. An omitted ID is rejected for non-EVM policies. Identifier components are percent-encoded so structured identifiers cannot create delimiter collisions. Control characters, malformed Unicode and identifiers longer than 1024 code units are rejected.
 
 Existing non-EVM lookup keys need rebuilding from their original identifiers and correct network ID. EVM mainnet identifiers without reserved characters keep their previous format. Canonical identities are lookup keys; retain verified raw asset addresses for transaction construction. Non-EVM numeric network IDs are application-defined and need a consistent mapping to the actual network/genesis.
 

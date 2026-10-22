@@ -16,24 +16,26 @@ export function validateAssetIdentifier(identifier) {
     }
 }
 function validateNetwork(chainId, networkType) {
-    if (!Number.isSafeInteger(chainId) || chainId <= 0) {
-        throw new Error("INVALID_CHAIN_ID: A positive safe integer network identifier is required");
-    }
     if (networkType !== "evm" && networkType !== "non-evm") {
         throw new Error("UNSUPPORTED_NETWORK_TYPE: Select evm or non-evm explicitly");
     }
+    const id = chainId === undefined && networkType === "evm" ? 1 : chainId;
+    if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
+        throw new Error("INVALID_CHAIN_ID: Non-EVM assets require an explicit positive safe integer network identifier");
+    }
+    return id;
 }
-export function canonicalizeAsset(identifier, chainId = 1, networkType = "evm") {
+export function canonicalizeAsset(identifier, chainId, networkType = "evm") {
     validateAssetIdentifier(identifier);
-    validateNetwork(chainId, networkType);
+    const networkId = validateNetwork(chainId, networkType);
     const trimmed = identifier.trim();
     if (networkType === "evm") {
         const lower = encodeURIComponent(trimmed.toLowerCase());
-        return chainId === 1 ? lower : `eip155:${chainId}:${lower}`;
+        return networkId === 1 ? lower : `eip155:${networkId}:${lower}`;
     }
-    return `non-evm:${chainId}:${encodeURIComponent(trimmed)}`;
+    return `non-evm:${networkId}:${encodeURIComponent(trimmed)}`;
 }
-export function getCanonicalPoolId(tokenA, tokenB, feeBps, chainId = 1, networkType = "evm") {
+export function getCanonicalPoolId(tokenA, tokenB, feeBps, chainId, networkType = "evm") {
     validateFeeBps(feeBps);
     const cA = canonicalizeAsset(tokenA, chainId, networkType);
     const cB = canonicalizeAsset(tokenB, chainId, networkType);

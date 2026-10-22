@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { canonicalizeAsset, getCanonicalPoolId } from "../dist/index.js";
 
 test("non-EVM asset and pool identities are separated by network", () => {
+  assert.throws(() => canonicalizeAsset("SOL", undefined, "non-evm"), /INVALID_CHAIN_ID/);
+  assert.throws(() => getCanonicalPoolId("SOL", "USDC", 30, undefined, "non-evm"), /INVALID_CHAIN_ID/);
   assert.notEqual(canonicalizeAsset("SOL", 101, "non-evm"), canonicalizeAsset("SOL", 102, "non-evm"));
   assert.notEqual(getCanonicalPoolId("SOL", "USDC", 30, 101, "non-evm").poolId,
     getCanonicalPoolId("SOL", "USDC", 30, 102, "non-evm").poolId);
